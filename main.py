@@ -4,6 +4,22 @@ from openpyxl.formatting.rule import CellIsRule
 from tkinter.filedialog import askopenfilename, asksaveasfilename
 import tkinter as tk
 import tkinter.messagebox as msg
+import re
+import pdfplumber
+
+__version__ = "1.1.0"
+__date__    = "2024.10.05"
+__author__  = "Lipcu"
+__url__     = "https://github.com/Lipcu-pku/ScoreSheetGenerator"
+
+def show_about():
+    about_text = (
+        f"程序作者: {__author__}\n"
+        f"版本: {__version__}\n"
+        f"更新日期: {__date__}\n"
+        f"检查更新: {__url__}\n"
+    )
+    msg.showinfo('关于', about_text)
 
 def read_namelist_cmd():
     """
@@ -85,8 +101,10 @@ def read_scorelist_cmd():
     
     for widget in table_frame.winfo_children():
         widget.destroy()
-        scores_entries = []
-        rates_entries = []
+    scores_entries = []
+    rates_entries = []
+    scores += ['']*max(0, n-len(scores))
+    rates += ['']*max(0, n-len(rates))
     
     # 第一行：题号
     for col in range(n):
@@ -109,29 +127,30 @@ def read_scorelist_cmd():
 
         entry1.bind("<KeyRelease>", lambda event: update_score(score_sum, scores_entries, scores, 'score'))
         entry2.bind("<KeyRelease>", lambda event: update_score(rate_sum, rates_entries, rates, 'rate'))
+    update_score(score_sum, scores_entries, scores, 'score')
+    update_score(rate_sum, rates_entries, rates, 'rate')
 
-    def update_score(widget, entries, values, name):
-        total = 0
-        for entry in entries:
-            try:
-                value = float(entry.get())
-                total += value
-            except:
-                continue
-        if name == 'rate':
-            if total == 100:
-                widget.config(text=f'{total:.1f}', foreground='green')
-            else:
-                widget.config(text=f'{total:.1f}', foreground='red')
-        else:
+def update_score(widget, entries, values, name):
+    total = 0
+    for entry in entries:
+        try:
+            value = float(entry.get())
+            total += value
+        except:
+            continue
+    if name == 'rate':
+        if total == 100:
             widget.config(text=f'{total:.1f}', foreground='green')
-        for (i, entry) in enumerate(entries):
-            try:
-                value = float(entry.get())
-                values[i] = value
-            except:
-                values[i] = 0
-    pass
+        else:
+            widget.config(text=f'{total:.1f}', foreground='red')
+    else:
+        widget.config(text=f'{total:.1f}', foreground='green')
+    for (i, entry) in enumerate(entries):
+        try:
+            value = float(entry.get())
+            values[i] = value
+        except:
+            values[i] = 0
 
 def generate_sheet_cmd():
     """
@@ -278,15 +297,65 @@ def col_order(n: int):
         n //= 26
     return ''.join(result[::-1])
 
+def read_pdf_cmd():
+    global scores, rates, n, pdf_path_var
+
+    pattern = re.compile(r"第\s*(\d+)\s*题\s*[(（]\s*(\d+)\s*分\s*[,，]\s*占[比]?\s*(\d+)\s*%\s*[)）]")
+    pdf_path = askopenfilename(filetypes=[('PDF File', ('*.pdf'))])
+    pdf_path_var.set(pdf_path)
+    if pdf_path == '':
+        return
+
+    all_text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            all_text += page.extract_text()
+    matches = re.findall(pattern, all_text)
+    if matches == []:
+        msg.showerror('错误', '未找到PDF中的分数信息，请检查PDF文件！')
+        return
+    scores = []
+    rates = []
+    i = 1
+    for match in matches:
+        index, score, rate = tuple(int(_) for _ in match)
+        if index == i:
+            scores.append(score)
+            rates.append(rate)
+            i += 1
+        elif index > i:
+            while index > i:
+                scores.append('')
+                rates.append('')
+                i += 1
+        elif index < i:
+            if scores[index] != '':
+                scores[index] = score
+            if rates[index] != '':
+                rates[index] = rate
+    n = len(scores)
+    n_entry.config(textvariable=tk.IntVar(value=n))
+    read_scorelist_cmd()
+    
+
+
+def add_about_menu():
+    menu = tk.Menu(root)
+    root.config(menu=menu)
+    about_menu = tk.Menu(menu)
+    menu.add_cascade(label="帮助", menu=about_menu)
+    about_menu.add_command(label="关于", command=show_about)
 
 def clear_window():
     for widget in root.winfo_children():
         widget.destroy()
+    # add_about_menu()
+    
 
 def window1():
     global namelist_path_entry, namelist_path_var, namelist_text
     clear_window()
-    root.title('分数表生成器 | 读取学生名单')
+    root.title(f'分数表生成器 (v{__version__}) | 读取学生名单')
 
     tk.Label(
         root,
@@ -326,7 +395,7 @@ def window1():
 def window2():
     global n_entry, table_frame
     clear_window()
-    root.title('分数表生成器 | 设置分数组成')
+    root.title(f'分数表生成器 (v{__version__}) | 设置分数组成')
 
     tk.Button(
         root,
@@ -355,6 +424,20 @@ def window2():
     table_frame.pack(pady=100)
     read_scorelist_cmd()
 
+    pdf_path_entry = tk.Entry(
+        root, 
+        textvariable=pdf_path_var,
+        width=52,
+        state='disabled',
+        background='white'
+    )
+    pdf_path_entry.place(x=250, y=300, anchor='c')
+    tk.Button(
+        root,
+        text='从试题pdf中读取（实验功能）',
+        command=read_pdf_cmd
+    ).place(x=250, y=270, anchor='c')
+
     tk.Button(
         root,
         text='生成成绩表>>',
@@ -371,12 +454,14 @@ if __name__ == "__main__":
 
     root = tk.Tk()
     root.geometry('500x500')
+
     namelist_path_var = tk.StringVar()
+    pdf_path_var = tk.StringVar()
     n = 10
     scores_entries = []
     rates_entries = []
-    scores = ['']*20
-    rates = ['']*20
+    scores = ['']*10
+    rates = ['']*10
+
     window1()
     root.mainloop()
-    
